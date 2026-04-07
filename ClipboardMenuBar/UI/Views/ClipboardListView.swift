@@ -4,11 +4,10 @@ struct ClipboardListView: View {
     @ObservedObject var clipboardStore: ClipboardStore
     @ObservedObject var panelController: PanelController
 
-    @State private var searchText = ""
     @State private var selectedIndex = 0
 
     private var items: [ClipboardItem] {
-        clipboardStore.fetchItems(searchText: searchText)
+        clipboardStore.fetchItems()
     }
 
     var body: some View {
@@ -23,12 +22,6 @@ struct ClipboardListView: View {
                 }
                 .buttonStyle(.borderless)
             }
-
-            TextField("Search text history", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: searchText) { _, _ in
-                    selectedIndex = 0
-                }
 
             if panelController.accessibilityEnabled == false {
                 HStack(spacing: 8) {

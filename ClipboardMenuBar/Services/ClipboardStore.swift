@@ -16,26 +16,12 @@ final class ClipboardStore: ObservableObject {
         self.maxItemCount = maxItemCount
     }
 
-    func fetchItems(searchText: String = "") -> [ClipboardItem] {
+    func fetchItems() -> [ClipboardItem] {
         let descriptor = FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .reverse)])
-        let all = (try? modelContext.fetch(descriptor)) ?? []
+        let all = Array(((try? modelContext.fetch(descriptor)) ?? []).prefix(maxItemCount))
 
-        let filtered: [ClipboardItem]
-        if searchText.isEmpty {
-            filtered = Array(all.prefix(maxItemCount))
-        } else {
-            filtered = all.filter { item in
-                switch item.kind {
-                case .text:
-                    return item.displayTitle.localizedCaseInsensitiveContains(searchText)
-                case .image:
-                    return "image".localizedCaseInsensitiveContains(searchText)
-                }
-            }
-        }
-
-        let pinned = filtered.filter { $0.isPinned }
-        let unpinned = filtered.filter { !$0.isPinned }
+        let pinned = all.filter { $0.isPinned }
+        let unpinned = all.filter { !$0.isPinned }
         return pinned + unpinned
     }
 
