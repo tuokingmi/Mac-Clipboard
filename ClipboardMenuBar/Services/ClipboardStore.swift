@@ -6,19 +6,17 @@ import SwiftData
 final class ClipboardStore: ObservableObject {
     private let modelContext: ModelContext
     private let imageStorage: ImageStorage
-    let maxItemCount: Int
 
     private(set) var suppressedSignature: String?
 
-    init(modelContext: ModelContext, imageStorage: ImageStorage, maxItemCount: Int = 100) {
+    init(modelContext: ModelContext, imageStorage: ImageStorage) {
         self.modelContext = modelContext
         self.imageStorage = imageStorage
-        self.maxItemCount = maxItemCount
     }
 
     func fetchItems() -> [ClipboardItem] {
         let descriptor = FetchDescriptor<ClipboardItem>(sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .reverse)])
-        let all = Array(((try? modelContext.fetch(descriptor)) ?? []).prefix(maxItemCount))
+        let all = (try? modelContext.fetch(descriptor)) ?? []
 
         let pinned = all.filter { $0.isPinned }
         let unpinned = all.filter { !$0.isPinned }
@@ -26,7 +24,11 @@ final class ClipboardStore: ObservableObject {
     }
 
     func latestItem() -> ClipboardItem? {
-        fetchItems().first
+        var descriptor = FetchDescriptor<ClipboardItem>(
+            sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        return try? modelContext.fetch(descriptor).first
     }
 
     func suppressNextCapture(signature: String) {
@@ -37,7 +39,7 @@ final class ClipboardStore: ObservableObject {
         guard shouldSave(signature: signature) else { return }
         let item = ClipboardItem(kind: .text, textContent: text, pasteboardSignature: signature)
         modelContext.insert(item)
-        persistAndTrim()
+        persist()
     }
 
     func saveImage(payload: StoredImagePayload, signature: String) {
@@ -55,7 +57,7 @@ final class ClipboardStore: ObservableObject {
             pasteboardSignature: signature
         )
         modelContext.insert(item)
-        persistAndTrim()
+        persist()
     }
 
     func togglePin(_ item: ClipboardItem) {
@@ -64,14 +66,18 @@ final class ClipboardStore: ObservableObject {
         objectWillChange.send()
     }
 
-    func clearAll() {
+    @discardableResult
+    func clearAll() -> Int {
         let items = fetchItems().filter { !$0.isPinned }
+        guard items.isEmpty == false else { return 0 }
+
         items.forEach { item in
             imageStorage.deleteImage(relativePath: item.imagePath)
             modelContext.delete(item)
         }
         try? modelContext.save()
         objectWillChange.send()
+        return items.count
     }
 
     func image(for item: ClipboardItem) -> NSImage? {
@@ -100,24 +106,8 @@ final class ClipboardStore: ObservableObject {
         return true
     }
 
-    private func persistAndTrim() {
-        trimIfNeeded()
+    private func persist() {
         try? modelContext.save()
         objectWillChange.send()
-    }
-
-    private func trimIfNeeded() {
-        let descriptor = FetchDescriptor<ClipboardItem>(
-            sortBy: [SortDescriptor(\ClipboardItem.createdAt, order: .reverse)]
-        )
-        let allItems = (try? modelContext.fetch(descriptor)) ?? []
-        let unpinned = allItems.filter { !$0.isPinned }
-
-        guard unpinned.count > maxItemCount else { return }
-
-        for item in unpinned.dropFirst(maxItemCount) {
-            imageStorage.deleteImage(relativePath: item.imagePath)
-            modelContext.delete(item)
-        }
     }
 }

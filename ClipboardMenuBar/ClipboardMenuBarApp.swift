@@ -1,4 +1,5 @@
 import AppKit
+import SQLite3
 import ServiceManagement
 import SwiftData
 import SwiftUI
@@ -21,11 +22,8 @@ final class AppServices: ObservableObject {
     private var permissionRefreshTimer: Timer?
 
     private init() {
-        let schema = Schema([ClipboardItem.self])
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
         do {
-            modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            modelContainer = try Self.makeModelContainer()
         } catch {
             fatalError("Failed to create SwiftData container: \(error)")
         }
@@ -113,6 +111,72 @@ final class AppServices: ObservableObject {
         if let permissionRefreshTimer {
             RunLoop.main.add(permissionRefreshTimer, forMode: .common)
         }
+    }
+
+    private static func makeModelContainer() throws -> ModelContainer {
+        let schema = Schema([ClipboardItem.self])
+        let storeURL = try persistentStoreURL()
+        try migrateLegacyStoreIfNeeded(to: storeURL)
+
+        let configuration = ModelConfiguration(
+            "ClipboardHistory",
+            schema: schema,
+            url: storeURL
+        )
+
+        return try ModelContainer(for: schema, configurations: [configuration])
+    }
+
+    private static func persistentStoreURL() throws -> URL {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "ClipboardMenuBar"
+        let fileManager = FileManager.default
+        let baseDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appDirectory = baseDirectory.appendingPathComponent(bundleIdentifier, isDirectory: true)
+        try fileManager.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        return appDirectory.appendingPathComponent("ClipboardHistory.store", isDirectory: false)
+    }
+
+    private static func migrateLegacyStoreIfNeeded(to storeURL: URL) throws {
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: storeURL.path) == false else { return }
+
+        let baseDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let legacyStoreURL = baseDirectory.appendingPathComponent("default.store", isDirectory: false)
+
+        guard fileManager.fileExists(atPath: legacyStoreURL.path),
+              legacyStoreContainsClipboardItems(at: legacyStoreURL) else {
+            return
+        }
+
+        for suffix in ["", "-wal", "-shm"] {
+            let sourceURL = URL(fileURLWithPath: legacyStoreURL.path + suffix)
+            let destinationURL = URL(fileURLWithPath: storeURL.path + suffix)
+
+            guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        }
+    }
+
+    private static func legacyStoreContainsClipboardItems(at storeURL: URL) -> Bool {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(storeURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            if database != nil {
+                sqlite3_close(database)
+            }
+            return false
+        }
+
+        defer { sqlite3_close(database) }
+
+        let query = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ZCLIPBOARDITEM' LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK else {
+            return false
+        }
+
+        defer { sqlite3_finalize(statement) }
+        return sqlite3_step(statement) == SQLITE_ROW
     }
 }
 

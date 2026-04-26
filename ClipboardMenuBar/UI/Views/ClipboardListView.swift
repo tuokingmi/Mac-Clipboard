@@ -1,10 +1,17 @@
 import SwiftUI
 
 struct ClipboardListView: View {
+    private enum ClearButtonState: Equatable {
+        case idle
+        case success
+    }
+
     @ObservedObject var clipboardStore: ClipboardStore
     @ObservedObject var panelController: PanelController
 
     @State private var selectedIndex = 0
+    @State private var clearButtonState: ClearButtonState = .idle
+    @State private var clearFeedbackTask: Task<Void, Never>?
 
     private var items: [ClipboardItem] {
         clipboardStore.fetchItems()
@@ -16,9 +23,17 @@ struct ClipboardListView: View {
                 Text("Clipboard History")
                     .font(.title3.weight(.semibold))
                 Spacer()
-                Button("Clear") {
-                    clipboardStore.clearAll()
-                    selectedIndex = 0
+                Button {
+                    handleClear()
+                } label: {
+                    ZStack(alignment: .trailing) {
+                        Text("Clear")
+                            .opacity(clearButtonState == .idle ? 1 : 0)
+
+                        Image(systemName: "checkmark")
+                            .opacity(clearButtonState == .success ? 1 : 0)
+                    }
+                    .animation(.easeInOut(duration: 0.18), value: clearButtonState)
                 }
                 .buttonStyle(.borderless)
             }
@@ -103,6 +118,19 @@ struct ClipboardListView: View {
         .onAppear {
             panelController.notifyPermissionStateChanged()
         }
+        .onDisappear {
+            clearFeedbackTask?.cancel()
+            clearFeedbackTask = nil
+            clearButtonState = .idle
+        }
+    }
+
+    private func handleClear() {
+        let clearedCount = clipboardStore.clearAll()
+        guard clearedCount > 0 else { return }
+
+        selectedIndex = 0
+        showClearSuccessFeedback()
     }
 
     private func handleKeyDown(_ event: NSEvent) {
@@ -123,6 +151,26 @@ struct ClipboardListView: View {
             panelController.hide()
         default:
             break
+        }
+    }
+
+    private func showClearSuccessFeedback() {
+        clearFeedbackTask?.cancel()
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            clearButtonState = .success
+        }
+
+        clearFeedbackTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard Task.isCancelled == false else { return }
+
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    clearButtonState = .idle
+                }
+                clearFeedbackTask = nil
+            }
         }
     }
 }
